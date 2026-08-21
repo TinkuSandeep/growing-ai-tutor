@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Growing AI Tutor — Family Beta</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <span class="beta-pill">FAMILY BETA</span>
+      <h1>🌱 Growing AI Tutor</h1>
+      <p>Affordable bilingual learning for Indian families • English + తెలుగు</p>
+    </header>
+
+    <section id="loginCard" class="card narrow">
+      <h2>Family Beta Login</h2>
+      <p class="muted">Use the beta password shared with your family.</p>
+      <input id="password" type="password" placeholder="App password" />
+      <button onclick="login()">Enter Beta</button>
+      <p id="loginMsg" class="msg"></p>
+    </section>
+
+    <section id="app" class="hidden">
+      <nav class="tabs">
+        <button onclick="showTab('learn')">🎓 Learn</button>
+        <button onclick="showTab('abacus')">🧮 Abacus</button>
+        <button onclick="showTab('parent')">📊 Parent</button>
+        <button onclick="showTab('feedbackTab')">💬 Feedback</button>
+      </nav>
+
+      <div class="card">
+        <div class="row student-row">
+          <select id="studentSelect"></select>
+          <span id="betaCode" class="beta-code"></span>
+          <select id="languageSelect" onchange="updateLanguage()">
+            <option value="both">తెలుగు + English</option>
+            <option value="english">English</option>
+            <option value="telugu">తెలుగు</option>
+          </select>
+        </div>
+        <div class="row add-row">
+          <input id="newStudent" placeholder="New student name" />
+          <input id="grade" type="number" value="2" min="1" max="12" aria-label="Grade" />
+          <select id="newLanguage">
+            <option value="both">తెలుగు + English</option>
+            <option value="english">English</option>
+            <option value="telugu">తెలుగు</option>
+          </select>
+          <button onclick="addStudent()">Add Student</button>
+        </div>
+      </div>
+
+      <section id="learn" class="tab card">
+        <h2>Learning Studio</h2>
+        <p class="muted">Choose a topic, learn it simply, then try a question.</p>
+        <div class="row">
+          <select id="subject" onchange="refreshTopics()"></select>
+          <select id="topic"></select>
+          <button onclick="teach()">Teach Me</button>
+          <button onclick="nextQuestion()">New Question</button>
+        </div>
+        <div id="teacher" class="teacher"></div>
+        <div id="quizBox" class="quiz hidden">
+          <h3 id="question"></h3>
+          <input id="answer" placeholder="Your answer" onkeydown="if(event.key==='Enter') submitAnswer()" />
+          <button onclick="submitAnswer()">Check</button>
+          <p id="feedback" class="msg"></p>
+        </div>
+        <div id="recommendation" class="recommendation"></div>
+      </section>
+
+      <section id="abacus" class="tab card hidden">
+        <h2>🧮 Abacus Lab</h2>
+        <p class="muted">Build number sense visually before moving to speed and mental-abacus modes.</p>
+        <div class="row">
+          <input id="abacusNumber" type="number" min="0" max="9999" value="27" />
+          <button onclick="buildAbacus()">Show Number</button>
+        </div>
+        <div id="abacusBoard" class="abacus"></div>
+        <ol id="abacusSteps"></ol>
+      </section>
+
+      <section id="parent" class="tab card hidden">
+        <h2>📊 Parent Dashboard</h2>
+        <div id="summary" class="summary-box"></div>
+        <table>
+          <thead><tr><th>Subject</th><th>Topic</th><th>Attempts</th><th>Mastery</th><th>Level</th></tr></thead>
+          <tbody id="progressRows"></tbody>
+        </table>
+        <h3>Family Beta Signals</h3>
+        <div id="betaStats" class="stats-grid"></div>
+      </section>
+
+      <section id="feedbackTab" class="tab card hidden">
+        <h2>💬 Help Us Build It Better</h2>
+        <p class="muted">This beta is for learning what children and parents actually need. Your answers shape the next version.</p>
+        <div class="feedback-grid">
+          <label>Was this useful?
+            <select id="usefulRating"><option value="yes">😃 Yes</option><option value="little">😐 A little</option><option value="no">😕 No</option></select>
+          </label>
+          <label>Difficulty felt...
+            <select id="difficultyRating"><option value="right">Just right</option><option value="easy">Too easy</option><option value="hard">Too difficult</option></select>
+          </label>
+          <label>Preferred teaching language
+            <select id="feedbackLanguage"><option value="both">తెలుగు + English</option><option value="english">English</option><option value="telugu">తెలుగు</option></select>
+          </label>
+          <label>Would you use it regularly?
+            <select id="regularUse"><option value="yes">Yes</option><option value="maybe">Maybe</option><option value="no">No</option></select>
+          </label>
+          <label>Would you consider paying?
+            <select id="payChoice"><option value="149">₹149/month</option><option value="99">₹99/month</option><option value="199">₹199/month</option><option value="free">Only if free</option></select>
+          </label>
+        </div>
+        <label>What should we add next?
+          <textarea id="requestedFeatures" placeholder="Voice tutor, more Telugu, school textbook support, better abacus, homework photo, etc."></textarea>
+        </label>
+        <label>Anything else?
+          <textarea id="comments" placeholder="What did your child like or struggle with?"></textarea>
+        </label>
+        <button onclick="submitBetaFeedback()">Send Feedback</button>
+        <p id="feedbackMsg" class="msg"></p>
+      </section>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
