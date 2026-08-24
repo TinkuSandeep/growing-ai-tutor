@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import get_settings
@@ -16,6 +17,8 @@ if settings.is_prod:
         raise RuntimeError("APP_PASSWORD must be changed in production")
     if settings.session_secret == "dev-only-secret-change-me":
         raise RuntimeError("SESSION_SECRET must be changed in production")
+    if not settings.database_url.startswith(("postgres://", "postgresql://", "postgresql+psycopg://")):
+        raise RuntimeError("DATABASE_URL must use PostgreSQL in production")
 
 Base.metadata.create_all(bind=engine)
 
@@ -40,7 +43,9 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "app": settings.app_name}
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
+    return {"status": "ok", "app": settings.app_name, "database": "connected"}
 
 
 @app.get("/")

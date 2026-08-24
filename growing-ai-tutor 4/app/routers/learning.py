@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.auth import require_login
+from app.auth import owned_student, require_login
 from app.database import get_db
-from app.models import QuizQuestion, Student
+from app.models import QuizQuestion
 from app.schemas import AbacusRequest, QuizAnswer, TutorRequest
 from app.services.abacus import represent, teaching_steps
 from app.services.progress import record_attempt
@@ -46,9 +46,8 @@ def quiz(subject: str, topic: str, difficulty: int = 1, db: Session = Depends(ge
 
 
 @router.post("/quiz/answer")
-def answer(payload: QuizAnswer, db: Session = Depends(get_db)):
-    if not db.get(Student, payload.student_id):
-        raise HTTPException(status_code=404, detail="Student not found")
+def answer(payload: QuizAnswer, parent_id: int = Depends(require_login), db: Session = Depends(get_db)):
+    owned_student(db, payload.student_id, parent_id)
     question = db.get(QuizQuestion, payload.question_id)
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
@@ -58,10 +57,8 @@ def answer(payload: QuizAnswer, db: Session = Depends(get_db)):
 
 
 @router.post("/tutor")
-def tutor(payload: TutorRequest, db: Session = Depends(get_db)):
-    student = db.get(Student, payload.student_id)
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found")
+def tutor(payload: TutorRequest, parent_id: int = Depends(require_login), db: Session = Depends(get_db)):
+    student = owned_student(db, payload.student_id, parent_id)
     return explain_for_child(
         grade=student.grade,
         subject=payload.subject,
@@ -72,9 +69,8 @@ def tutor(payload: TutorRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/recommendation/{student_id}")
-def recommendation(student_id: int, db: Session = Depends(get_db)):
-    if not db.get(Student, student_id):
-        raise HTTPException(status_code=404, detail="Student not found")
+def recommendation(student_id: int, parent_id: int = Depends(require_login), db: Session = Depends(get_db)):
+    owned_student(db, student_id, parent_id)
     return recommend_next(db, student_id)
 
 

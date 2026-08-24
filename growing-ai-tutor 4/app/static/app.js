@@ -25,16 +25,52 @@ async function api(path, options = {}) {
 }
 
 async function login() {
-  const password = document.querySelector('#password').value;
+  const email = document.querySelector('#loginEmail').value.trim();
+  const password = document.querySelector('#loginPassword').value;
   const msg = document.querySelector('#loginMsg');
   msg.textContent = '';
   try {
-    const data = await api('/api/auth/login', {method:'POST', body: JSON.stringify({password})});
-    if (!data.ok) { msg.textContent = 'Incorrect password'; return; }
+    await api('/api/auth/login', {method:'POST', body: JSON.stringify({email, password})});
     await boot();
   } catch (err) {
     msg.textContent = err.message || 'Unable to sign in. Please try again.';
   }
+}
+
+function showRegister() {
+  document.querySelector('#loginForm').classList.add('hidden');
+  document.querySelector('#registerForm').classList.remove('hidden');
+  document.querySelector('#loginMsg').textContent = '';
+}
+
+function showLogin() {
+  document.querySelector('#registerForm').classList.add('hidden');
+  document.querySelector('#loginForm').classList.remove('hidden');
+  document.querySelector('#loginMsg').textContent = '';
+}
+
+async function registerParent() {
+  const msg = document.querySelector('#loginMsg');
+  msg.textContent = '';
+  const payload = {
+    display_name: document.querySelector('#parentName').value.trim(),
+    email: document.querySelector('#registerEmail').value.trim(),
+    password: document.querySelector('#registerPassword').value,
+    invite_code: document.querySelector('#inviteCode').value.trim(),
+  };
+  try {
+    await api('/api/auth/register', {method:'POST', body:JSON.stringify(payload)});
+    await boot();
+  } catch (err) {
+    msg.textContent = err.message || 'Unable to create account.';
+  }
+}
+
+async function logout() {
+  await api('/api/auth/logout', {method:'POST'});
+  document.querySelector('#app').classList.add('hidden');
+  document.querySelector('#loginCard').classList.remove('hidden');
+  showLogin();
 }
 
 async function boot() {
@@ -190,6 +226,18 @@ async function loadDashboard() {
     <div><strong>${stats.useful_yes_pct}%</strong><span>Said useful</span></div>
     <div><strong>${stats.regular_use_yes_pct}%</strong><span>Would use regularly</span></div>
   `;
+  const status = await api('/api/auth/status');
+  const ownerPanel = document.querySelector('#ownerFeedback');
+  ownerPanel.classList.toggle('hidden', !status.is_beta_owner);
+  if (status.is_beta_owner) {
+    const all = await api('/api/feedback/owner/summary');
+    document.querySelector('#ownerBetaStats').innerHTML = `
+      <div><strong>${all.responses}</strong><span>Total responses</span></div>
+      <div><strong>${all.families}</strong><span>Families responding</span></div>
+      <div><strong>${all.useful_yes_pct}%</strong><span>Said useful</span></div>
+      <div><strong>${all.regular_use_yes_pct}%</strong><span>Would use regularly</span></div>
+    `;
+  }
 }
 
 async function submitBetaFeedback() {

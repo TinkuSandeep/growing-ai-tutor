@@ -18,7 +18,7 @@ Import the GitHub repository that contains this folder. If these files are at th
 repository root, leave **Root Directory** empty. If they are inside a subfolder,
 set Root Directory to that subfolder.
 
-FastAPI entrypoint: `app/main.py`
+FastAPI Vercel entrypoint: `api/index.py` (imports `app.main:app`)
 
 ## 3. Required Vercel environment variables
 
@@ -29,6 +29,7 @@ Set these for Production (and Preview if desired):
 - `APP_PASSWORD=<your beta password>`
 - `SESSION_SECRET=<a long random secret>`
 - `SESSION_HTTPS_ONLY=true`
+- `BETA_INVITE_CODES=<comma-separated one-time family invite codes>`
 
 Optional:
 
@@ -37,7 +38,9 @@ Optional:
 
 ## 4. Database
 
-For the first smoke test, the app can start without `DATABASE_URL`; in production
+Production requires `DATABASE_URL`; the app intentionally refuses to start with
+SQLite so family accounts, progress, and feedback cannot be silently lost. Use
+a pooled managed PostgreSQL connection such as Neon:
 it will use SQLite under `/tmp`. **That storage is temporary and may reset.**
 
 Before inviting family/friends for meaningful testing, set a persistent Postgres URL:
@@ -55,4 +58,3 @@ The schema is created automatically on startup for this beta.
 - New Question -> answer -> Check shows green/red feedback
 - Parent dashboard updates
 - Feedback form submits
-

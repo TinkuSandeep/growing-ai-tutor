@@ -2,7 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.database import Base
-from app.models import QuizQuestion, Student
+from app.models import Parent, QuizQuestion, Student
 from app.services.progress import record_attempt
 
 
@@ -11,7 +11,10 @@ def test_first_attempt_creates_progress_and_returns_feedback():
     Base.metadata.create_all(engine)
 
     with Session(engine) as db:
-        student = Student(display_name="Beta Kid", grade=2)
+        parent = Parent(email="progress@example.com", display_name="Parent", password_hash="test", invite_code_hash="progress")
+        db.add(parent)
+        db.flush()
+        student = Student(parent_id=parent.id, display_name="Beta Kid", grade=2)
         question = QuizQuestion(
             subject="Maths",
             topic="Addition",

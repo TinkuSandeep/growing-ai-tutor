@@ -1,19 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.auth import require_login
+from app.auth import owned_student, require_login
 from app.database import get_db
-from app.models import Attempt, Progress, Student
+from app.models import Attempt, Progress
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"], dependencies=[Depends(require_login)])
 
 
 @router.get("/{student_id}")
-def dashboard(student_id: int, db: Session = Depends(get_db)):
-    student = db.get(Student, student_id)
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found")
+def dashboard(student_id: int, parent_id: int = Depends(require_login), db: Session = Depends(get_db)):
+    student = owned_student(db, student_id, parent_id)
 
     total = db.scalar(select(func.count(Attempt.id)).where(Attempt.student_id == student_id)) or 0
     correct = db.scalar(
