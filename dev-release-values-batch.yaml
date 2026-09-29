@@ -1,0 +1,108 @@
+# k8s-cd/releases/dev/ocp-str14/ocp-str14/values.yaml
+# DEV overrides. AutoSys creates and schedules the Kubernetes Jobs.
+
+namespace: 1tcoo-dev
+environment: DEVELOPMENT
+
+job:
+  enabled: false
+
+deployment:
+  enabled: false
+  replicaCount: 0
+
+cronjob:
+  enabled: false
+  suspend: true
+
+service:
+  enabled: false
+
+routes:
+  enabled: false
+
+hpa:
+  enabled: false
+
+container:
+  name: 1tcoo-batch-transformation
+  image: wfcertifiedvirtual.wfcr.wellsfargo.net/<+serviceVariables.imageName>:<+serviceVariables.imageTag>
+  imagePullPolicy: Always
+  cpu:
+    limit: 256m
+    request: 100m
+  memory:
+    limit: 1Gi
+    request: 512Mi
+
+volumes:
+  - name: batch-output
+    persistentVolumeClaim:
+      claimName: 1tcoo-nonprod-smb-pvc
+  - name: tmp
+    emptyDir:
+      sizeLimit: 2Gi
+
+volumeMounts:
+  - name: batch-output
+    mountPath: /mnt
+  - name: tmp
+    mountPath: /tmp
+
+configmap:
+  enabled: true
+  name: batch-dashboard-settings
+  data:
+    AUTOSYS_API_USER: "SRV_1TCOO_ES_ATSYS"
+    DB_DRIVER: "ODBC Driver 18 for SQL Server"
+    DB_PORT: "1433"
+    DB_NAME: "CHANGE_ME"
+    LOG_DIR: "/mnt/batch-dashboard/logs"
+    settings.yaml: |-
+      autosys:
+        base_url_template: "https://{instance}-autosyswebapi.wellsfargo.com/AEWS"
+        verify_ssl: true
+        ca_bundle_path: "/mnt/certificates/wellsfargo-ca-bundle.pem"
+        timeout_seconds: 120
+        request_delay_seconds: 0.2
+        max_retries: 3
+        retry_backoff_seconds: 1.0
+        retry_backoff_max_seconds: 30.0
+        honor_retry_after: true
+        api_version: 3
+        timezone: "America/New_York"
+        store_naive_local_time: true
+        api_principal_env: "AUTOSYS_API_USER"
+        api_secret_env: "AUTOSYS_API_PASSWORD"
+
+      database:
+        driver_env: "DB_DRIVER"
+        host_env: "DB_HOST"
+        port_env: "DB_PORT"
+        database_name_env: "DB_NAME"
+        principal_env: "DB_USER"
+        secret_env: "DB_PASSWORD"
+        encrypt: true
+        trust_server_certificate: false
+        discovery_stored_procedure: "dbo.cp_Get_Critical_Batch_Jobs"
+        job_name_column: "job_name"
+        instance_column: "scheduler_instance"
+        update_stored_procedure: "dbo.cp_Update_Job_Execution_Status"
+        summary_stored_procedure: "dbo.cp_Update_Critical_Batch_Summary"
+        stream_stored_procedure: "dbo.cp_Update_Critical_Batch_Stream"
+
+      ingestion:
+        file_output_enabled: false
+        output_directory: "/mnt/batch-dashboard/output"
+        log_directory: "/mnt/batch-dashboard/logs"
+        abort_on_job_error: true
+        require_minimum_target_count: null
+
+secret:
+  enabled: true
+  name: 1tcoo-batch-transformation-app-secret
+  data:
+    AUTOSYS_API_PASSWORD: '<+secrets.getValue("AUTOSYS_PASSWORD_VAULT_REFERENCE")>'
+    DB_USER: '<+secrets.getValue("DB_USER_VAULT_REFERENCE")>'
+    DB_HOST: '<+secrets.getValue("DB_HOST_VAULT_REFERENCE")>'
+    DB_PASSWORD: '<+secrets.getValue("DB_PASSWORD_VAULT_REFERENCE")>'

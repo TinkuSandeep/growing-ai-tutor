@@ -1,0 +1,82 @@
+# k8s-cd/charts/values.yaml
+# Common defaults for the AutoSys-triggered batch transformation image.
+
+cicd:
+  projectName: <+project.name>
+  triggerKey: <+pipeline.triggeredBy.name>
+  executionUrl: <+pipeline.executionUrl>
+  wf_name: AUREB
+  wf_id: 1TCOO-AUCFB
+
+container:
+  name: batch-transformation
+  image: wfcertifiedvirtual.wfcr.wellsfargo.net/<+serviceVariables.imageName>:<+serviceVariables.imageTag>
+  imagePullPolicy: Always
+  ports: []
+  cpu:
+    limit: 256m
+    request: 100m
+  memory:
+    limit: 1Gi
+    request: 512Mi
+  diskQuota:
+    limit: 1Gi
+
+healthcheck:
+  enabled: false
+
+nameOverride: 1tcoo-batch-transformation
+fullnameOverride: 1tcoo-batch-transformation
+
+serviceAccount:
+  name: 1tcoo-batch-transformation-sa
+  create: true
+  automount: true
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext: {}
+securityContext: {}
+
+# This image performs finite batch commands. It is not a web service.
+deployment:
+  enabled: false
+  replicaCount: 0
+  resources: {}
+
+service:
+  enabled: false
+
+routes:
+  enabled: false
+
+cronjob:
+  enabled: false
+
+job:
+  enabled: false
+
+volumes:
+  - name: tmp
+    emptyDir:
+      sizeLimit: 2Gi
+
+volumeMounts:
+  - name: tmp
+    mountPath: /tmp
+
+configmap:
+  enabled: true
+  name: batch-dashboard-settings
+  data: {}
+
+secret:
+  enabled: true
+  name: 1tcoo-batch-transformation-app-secret
+  data: {}
+
+hpa:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 2
+  targetCPUUtilizationPercentage: 80
