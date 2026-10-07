@@ -1,9 +1,11 @@
 from __future__ import annotations  
   
 import argparse  
-import json  
+import csv  
 import os  
 import sys  
+from pathlib import Path  
+from urllib.parse import urljoin  
   
 import requests  
 import urllib3  
@@ -12,8 +14,7 @@ from requests.auth import HTTPBasicAuth
   
   
 # ============================================================  
-# AUTOSYS CONFIGURATION  
-# Same URL pattern as working Batch Dashboard  
+# CONFIGURATION  
 # ============================================================  
   
 AUTOSYS_BASE_URL = (  
@@ -22,6 +23,10 @@ AUTOSYS_BASE_URL = (
   
 API_VERSION = 3  
 TIMEOUT_SECONDS = 120  
+  
+# Start conservatively. If AEWS accepts a larger page size,  
+# you can increase this later.  
+PAGE_SIZE = 100  
   
 ALLOWED_INSTANCES = {  
     "PB3",  
@@ -33,18 +38,17 @@ ALLOWED_INSTANCES = {
   
   
 # ============================================================  
-# BUILD AUTOSYS URL  
+# BUILD BASE URL  
 # ============================================================  
   
 def build_base_url(instance: str) -> str:  
   
-    instance = instance.upper().strip()  
+    instance = instance.strip().upper()  
   
     if instance not in ALLOWED_INSTANCES:  
         raise ValueError(  
             f"Unsupported AutoSys instance: {instance}. "  
-            f"Supported instances: "  
-            f"{', '.join(sorted(ALLOWED_INSTANCES))}"  
+            f"Supported: {', '.join(sorted(ALLOWED_INSTANCES))}"  
         )  
   
     return AUTOSYS_BASE_URL.format(  
@@ -69,182 +73,502 @@ class AutoSysClient:
   
         self.session = requests.Session()  
   
-        # Same authentication approach as Batch Dashboard  
         self.session.auth = HTTPBasicAuth(  
             username,  
             credential,  
         )  
   
-        # Same Accept header as Batch Dashboard  
         self.session.headers.update(  
             {  
-                "Accept": "application/json"  
+                "Accept": "application/json",  
             }  
         )  
   
-        # Hide warning only when user explicitly runs  
-        # with --no-ssl-verify for local testing.  
         if not verify_ssl:  
             urllib3.disable_warnings(  
                 urllib3.exceptions.InsecureRequestWarning  
             )  
   
-  
     # ========================================================  
-    # TEST /JOB ENDPOINT  
+    # GET APPLICATION JOBS  
     # ========================================================  
   
-    def get_jobs(  
+    def get_application_jobs(  
         self,  
         instance: str,  
-        count: int = 1,  
-    ):  
+        application: str,  
+    ) -> list[dict]:  
   
-        base_url = build_base_url(  
-            instance  
-        )  
+        instance = instance.strip().upper()  
+        application = application.strip().upper()  
+  
+        base_url = build_base_url(instance)  
   
         url = f"{base_url}/job"  
   
-        # Same parameters used by working Batch Dashboard  
-        # health_check()  
         params = {  
-            "count": count,  
+            "count": PAGE_SIZE,  
             "version": API_VERSION,  
         }  
   
-        print()  
-        print("=" * 70)  
-        print("AUTOSYS AEWS REQUEST")  
-        print("=" * 70)  
+        matched_jobs = []  
   
-        print(  
-            f"AutoSys Instance : {instance.upper()}"  
-        )  
+        page_number = 0  
+        jobs_scanned = 0  
   
-        print(  
-            f"AEWS URL         : {url}"  
-        )  
-  
-        print(  
-            f"API Version      : {API_VERSION}"  
-        )  
-  
-        print(  
-            f"SSL Verification : {self.verify_ssl}"  
-        )  
+        # Protect against a broken pagination loop.  
+        visited_urls = set()  
   
         print()  
-        print(  
-            "Connecting to AutoSys AEWS..."  
+        print("=" * 72)  
+        print("AUTOSYS APPLICATION JOB DISCOVERY")  
+        print("=" * 72)  
+  
+        print(f"Instance       : {instance}")  
+        print(f"Application    : {application}")  
+        print(f"API Version    : {API_VERSION}")  
+        print(f"Page Size      : {PAGE_SIZE}")  
+        print(f"SSL Verify     : {self.verify_ssl}")  
+  
+        print()  
+        print("Starting AEWS job discovery...")  
+        print()  
+  
+        while url:  
+  
+            page_number += 1  
+  
+            print(  
+                f"Reading page {page_number}..."  
+            )  
+  
+            try:  
+  
+                response = self.session.get(  
+                    url=url,  
+                    params=params,  
+                    timeout=TIMEOUT_SECONDS,  
+                    verify=self.verify_ssl,  
+                )  
+  
+            except requests.exceptions.SSLError as exc:  
+  
+                raise RuntimeError(  
+                    "SSL certificate validation failed. "  
+                    "For local testing you can use "  
+                    "--no-ssl-verify."  
+                ) from exc  
+  
+            except requests.exceptions.ConnectTimeout as exc:  
+  
+                raise RuntimeError(  
+                    "Connection to AutoSys AEWS timed out."  
+                ) from exc  
+  
+            except requests.exceptions.ReadTimeout as exc:  
+  
+                raise RuntimeError(  
+                    "AutoSys AEWS did not respond "  
+                    "before the timeout."  
+                ) from exc  
+  
+            except requests.exceptions.ConnectionError as exc:  
+  
+                raise RuntimeError(  
+                    "Unable to connect to AutoSys AEWS."  
+                ) from exc  
+  
+            except requests.exceptions.RequestException as exc:  
+  
+                raise RuntimeError(  
+                    f"AEWS request failed: {exc}"  
+                ) from exc  
+  
+            # ------------------------------------------------  
+            # HTTP STATUS CHECK  
+            # ------------------------------------------------  
+  
+            if response.status_code == 401:  
+  
+                raise RuntimeError(  
+                    "HTTP 401 - Authentication failed. "  
+                    "Check AUTOSYS_API_USER and "  
+                    "AUTOSYS_API_CREDENTIAL."  
+                )  
+  
+            if response.status_code == 403:  
+  
+                raise RuntimeError(  
+                    "HTTP 403 - Account does not have "  
+                    "permission to access AEWS."  
+                )  
+  
+            if response.status_code != 200:  
+  
+                raise RuntimeError(  
+                    f"AEWS returned HTTP "  
+                    f"{response.status_code}: "  
+                    f"{response.text[:500]}"  
+                )  
+  
+            # ------------------------------------------------  
+            # JSON RESPONSE  
+            # ------------------------------------------------  
+  
+            try:  
+  
+                data = response.json()  
+  
+            except ValueError as exc:  
+  
+                raise RuntimeError(  
+                    "AEWS returned invalid JSON."  
+                ) from exc  
+  
+            # ------------------------------------------------  
+            # JOB COLLECTION  
+            # ------------------------------------------------  
+  
+            jobs = data.get(  
+                "job",  
+                []  
+            )  
+  
+            if isinstance(jobs, dict):  
+                jobs = [jobs]  
+  
+            if not isinstance(jobs, list):  
+                raise RuntimeError(  
+                    "Unexpected AEWS response. "  
+                    "'job' is not a list."  
+                )  
+  
+            jobs_scanned += len(jobs)  
+  
+            page_matches = 0  
+  
+            for job in jobs:  
+  
+                job_application = str(  
+                    job.get(  
+                        "application",  
+                        ""  
+                    )  
+                ).strip().upper()  
+  
+                # --------------------------------------------  
+                # ONLY REQUESTED APPLICATION  
+                # --------------------------------------------  
+  
+                if job_application != application:  
+                    continue  
+  
+                page_matches += 1  
+  
+                matched_jobs.append(  
+                    {  
+                        "application": job.get(  
+                            "application",  
+                            ""  
+                        ),  
+  
+                        "scheduler_instance": instance,  
+  
+                        "job_name": job.get(  
+                            "name",  
+                            ""  
+                        ),  
+  
+                        "job_type": job.get(  
+                            "jobType",  
+                            ""  
+                        ),  
+  
+                        "box_name": job.get(  
+                            "boxName",  
+                            ""  
+                        ),  
+  
+                        "description": job.get(  
+                            "description",  
+                            ""  
+                        ),  
+  
+                        "machine": job.get(  
+                            "machine",  
+                            ""  
+                        ),  
+  
+                        "status_code": job.get(  
+                            "status",  
+                            ""  
+                        ),  
+  
+                        "status": job.get(  
+                            "strStatus",  
+                            ""  
+                        ),  
+                    }  
+                )  
+  
+            print(  
+                f"  Jobs scanned : {len(jobs)}"  
+            )  
+  
+            print(  
+                f"  {application} matches : "  
+                f"{page_matches}"  
+            )  
+  
+            # ------------------------------------------------  
+            # NEXT PAGE  
+            # ------------------------------------------------  
+  
+            next_object = data.get(  
+                "next"  
+            )  
+  
+            next_href = None  
+  
+            if isinstance(  
+                next_object,  
+                dict  
+            ):  
+                next_href = next_object.get(  
+                    "href"  
+                )  
+  
+            if not next_href:  
+  
+                print()  
+                print(  
+                    "No additional AEWS pages."  
+                )  
+  
+                break  
+  
+            # AEWS normally returns an absolute href,  
+            # but urljoin also handles relative hrefs safely.  
+  
+            next_url = urljoin(  
+                response.url,  
+                next_href  
+            )  
+  
+            # Prevent accidental infinite loop.  
+  
+            if next_url in visited_urls:  
+  
+                raise RuntimeError(  
+                    "AEWS pagination returned a URL "  
+                    "that has already been processed."  
+                )  
+  
+            visited_urls.add(  
+                next_url  
+            )  
+  
+            url = next_url  
+  
+            # IMPORTANT:  
+            # next.href already contains count/version/index.  
+            # Do not append the original params again.  
+  
+            params = None  
+  
+        # ====================================================  
+        # REMOVE DUPLICATES  
+        # ====================================================  
+  
+        unique_jobs = {}  
+  
+        for job in matched_jobs:  
+  
+            key = (  
+                job["scheduler_instance"],  
+                job["job_name"],  
+            )  
+  
+            unique_jobs[key] = job  
+  
+        matched_jobs = list(  
+            unique_jobs.values()  
         )  
   
-        try:  
+        # ====================================================  
+        # SORT RESULTS  
+        # ====================================================  
   
-            response = self.session.get(  
-                url,  
-                params=params,  
-                timeout=TIMEOUT_SECONDS,  
-                verify=self.verify_ssl,  
+        matched_jobs.sort(  
+            key=lambda item: (  
+                str(  
+                    item.get(  
+                        "box_name",  
+                        ""  
+                    )  
+                ).upper(),  
+  
+                str(  
+                    item.get(  
+                        "job_name",  
+                        ""  
+                    )  
+                ).upper(),  
             )  
-  
-        except requests.exceptions.SSLError as exc:  
-  
-            raise RuntimeError(  
-                "SSL certificate validation failed. "  
-                "Your local Python installation does not "  
-                "currently trust the AutoSys corporate "  
-                "certificate. For connectivity testing only, "  
-                "run with --no-ssl-verify."  
-            ) from exc  
-  
-        except requests.exceptions.ConnectTimeout as exc:  
-  
-            raise RuntimeError(  
-                "Connection to AutoSys AEWS timed out."  
-            ) from exc  
-  
-        except requests.exceptions.ReadTimeout as exc:  
-  
-            raise RuntimeError(  
-                "Connected to AutoSys AEWS, but the "  
-                "server did not respond before timeout."  
-            ) from exc  
-  
-        except requests.exceptions.ConnectionError as exc:  
-  
-            raise RuntimeError(  
-                "Unable to connect to AutoSys AEWS."  
-            ) from exc  
-  
-        except requests.exceptions.RequestException as exc:  
-  
-            raise RuntimeError(  
-                f"AutoSys request failed: {exc}"  
-            ) from exc  
-  
-        print(  
-            f"HTTP Status      : {response.status_code}"  
         )  
   
-        if response.status_code == 401:  
-  
-            raise RuntimeError(  
-                "HTTP 401 - AutoSys authentication failed. "  
-                "Check AUTOSYS_API_USER and "  
-                "AUTOSYS_API_CREDENTIAL."  
-            )  
-  
-        if response.status_code == 403:  
-  
-            raise RuntimeError(  
-                "HTTP 403 - Authentication succeeded, "  
-                "but this account is not authorized "  
-                "for the AEWS endpoint."  
-            )  
-  
-        if response.status_code != 200:  
-  
-            raise RuntimeError(  
-                f"AutoSys returned HTTP "  
-                f"{response.status_code}: "  
-                f"{response.text[:500]}"  
-            )  
+        print()  
+        print("=" * 72)  
+        print("DISCOVERY COMPLETE")  
+        print("=" * 72)  
   
         print(  
-            "AEWS connection successful."  
+            f"Pages Read      : {page_number}"  
         )  
   
-        try:  
+        print(  
+            f"Jobs Scanned    : {jobs_scanned}"  
+        )  
   
-            return response.json()  
+        print(  
+            f"{application} Jobs      : "  
+            f"{len(matched_jobs)}"  
+        )  
   
-        except ValueError as exc:  
-  
-            raise RuntimeError(  
-                "AEWS returned HTTP 200 but the "  
-                "response was not valid JSON."  
-            ) from exc  
+        return matched_jobs  
   
   
 # ============================================================  
-# DISPLAY RESPONSE  
+# WRITE CSV  
 # ============================================================  
   
-def display_response(data) -> None:  
+def write_csv(  
+    application: str,  
+    instance: str,  
+    jobs: list[dict],  
+) -> Path:  
+  
+    output_directory = Path(  
+        "output"  
+    )  
+  
+    output_directory.mkdir(  
+        parents=True,  
+        exist_ok=True,  
+    )  
+  
+    filename = (  
+        f"{application.upper()}_"  
+        f"{instance.upper()}_"  
+        f"autosys_jobs.csv"  
+    )  
+  
+    output_file = (  
+        output_directory  
+        / filename  
+    )  
+  
+    columns = [  
+        "application",  
+        "scheduler_instance",  
+        "job_name",  
+        "job_type",  
+        "box_name",  
+        "description",  
+        "machine",  
+        "status_code",  
+        "status",  
+    ]  
+  
+    with output_file.open(  
+        mode="w",  
+        newline="",  
+        encoding="utf-8-sig",  
+    ) as handle:  
+  
+        writer = csv.DictWriter(  
+            handle,  
+            fieldnames=columns,  
+        )  
+  
+        writer.writeheader()  
+  
+        writer.writerows(  
+            jobs  
+        )  
+  
+    return output_file  
+  
+  
+# ============================================================  
+# DISPLAY RESULTS  
+# ============================================================  
+  
+def display_jobs(  
+    jobs: list[dict],  
+    application: str,  
+) -> None:  
   
     print()  
-    print("=" * 70)  
-    print("AEWS RESPONSE")  
-    print("=" * 70)  
+    print("=" * 110)  
+    print(  
+        f"{application.upper()} JOBS"  
+    )  
+    print("=" * 110)  
+  
+    if not jobs:  
+  
+        print(  
+            "No matching jobs found."  
+        )  
+  
+        return  
   
     print(  
-        json.dumps(  
-            data,  
-            indent=2,  
-            default=str,  
-        )[:5000]  
+        f"{'JOB NAME':<45}"  
+        f"{'TYPE':<10}"  
+        f"{'BOX NAME':<35}"  
+        f"{'STATUS':<20}"  
     )  
+  
+    print("-" * 110)  
+  
+    for job in jobs:  
+  
+        job_name = str(  
+            job.get(  
+                "job_name",  
+                ""  
+            )  
+        )[:43]  
+  
+        job_type = str(  
+            job.get(  
+                "job_type",  
+                ""  
+            )  
+        )[:8]  
+  
+        box_name = str(  
+            job.get(  
+                "box_name",  
+                ""  
+            )  
+        )[:33]  
+  
+        status = str(  
+            job.get(  
+                "status",  
+                ""  
+            )  
+        )[:18]  
+  
+        print(  
+            f"{job_name:<45}"  
+            f"{job_type:<10}"  
+            f"{box_name:<35}"  
+            f"{status:<20}"  
+        )  
   
   
 # ============================================================  
@@ -255,7 +579,8 @@ def main() -> int:
   
     parser = argparse.ArgumentParser(  
         description=(  
-            "AutoSys application job-list utility."  
+            "Pull AutoSys jobs belonging "  
+            "to a specific application."  
         )  
     )  
   
@@ -272,7 +597,7 @@ def main() -> int:
         "--instance",  
         required=True,  
         help=(  
-            "AutoSys instance. "  
+            "AutoSys scheduler instance. "  
             "Example: PB3"  
         ),  
     )  
@@ -281,16 +606,16 @@ def main() -> int:
         "--no-ssl-verify",  
         action="store_true",  
         help=(  
-            "Disable SSL certificate verification "  
-            "for local connectivity testing only."  
+            "Disable SSL verification "  
+            "for local testing only."  
         ),  
     )  
   
     args = parser.parse_args()  
   
-    # --------------------------------------------------------  
-    # Load .env  
-    # --------------------------------------------------------  
+    # ========================================================  
+    # LOAD LOCAL ENVIRONMENT  
+    # ========================================================  
   
     load_dotenv(  
         override=False  
@@ -304,45 +629,44 @@ def main() -> int:
         "AUTOSYS_API_CREDENTIAL"  
     )  
   
-    # --------------------------------------------------------  
-    # Validate environment  
-    # --------------------------------------------------------  
+    # ========================================================  
+    # VALIDATION  
+    # ========================================================  
   
     if not username:  
   
-        print()  
         print(  
             "ERROR: AUTOSYS_API_USER "  
-            "was not found in .env."  
+            "was not found in .env"  
         )  
   
         return 1  
   
     if not credential:  
   
-        print()  
         print(  
             "ERROR: AUTOSYS_API_CREDENTIAL "  
-            "was not found in .env."  
+            "was not found in .env"  
         )  
   
         return 1  
   
-    instance = (  
-        args.instance  
-        .upper()  
-        .strip()  
-    )  
-  
     application = (  
         args.application  
         .strip()  
+        .upper()  
+    )  
+  
+    instance = (  
+        args.instance  
+        .strip()  
+        .upper()  
     )  
   
     print()  
-    print("=" * 70)  
+    print("=" * 72)  
     print("AUTOSYS APPLICATION JOB LIST")  
-    print("=" * 70)  
+    print("=" * 72)  
   
     print(  
         f"Application      : {application}"  
@@ -354,65 +678,89 @@ def main() -> int:
   
     try:  
   
+        # ====================================================  
+        # CREATE CLIENT  
+        # ====================================================  
+  
         client = AutoSysClient(  
             username=username,  
             credential=credential,  
             verify_ssl=not args.no_ssl_verify,  
         )  
   
-        # ----------------------------------------------------  
-        # IMPORTANT  
-        #  
-        # Connectivity validation first.  
-        #  
-        # This calls the exact /job endpoint pattern already  
-        # proven by the Batch Dashboard health_check().  
-        #  
-        # count=1 deliberately prevents a broad job pull.  
-        # ----------------------------------------------------  
+        # ====================================================  
+        # DISCOVER JOBS  
+        # ====================================================  
   
-        data = client.get_jobs(  
+        jobs = client.get_application_jobs(  
             instance=instance,  
-            count=1,  
+            application=application,  
         )  
   
-        display_response(  
-            data  
+        # ====================================================  
+        # DISPLAY JOBS  
+        # ====================================================  
+  
+        display_jobs(  
+            jobs=jobs,  
+            application=application,  
         )  
+  
+        # ====================================================  
+        # CREATE CSV  
+        # ====================================================  
+  
+        output_file = write_csv(  
+            application=application,  
+            instance=instance,  
+            jobs=jobs,  
+        )  
+  
+        # ====================================================  
+        # FINAL RESULT  
+        # ====================================================  
   
         print()  
-        print("=" * 70)  
-        print("CONNECTIVITY TEST SUCCESSFUL")  
-        print("=" * 70)  
+        print("=" * 72)  
+        print("COMPLETED")  
+        print("=" * 72)  
   
-        print()  
         print(  
-            f"Application requested : {application}"  
+            f"Application      : {application}"  
         )  
   
         print(  
-            "AEWS /job endpoint     : WORKING"  
-        )  
-  
-        print()  
-        print(  
-            "NOTE: This test deliberately requested "  
-            "only one job."  
+            f"AutoSys Instance : {instance}"  
         )  
   
         print(  
-            "The ODIN application filter has not "  
-            "been applied yet."  
+            f"Jobs Found       : {len(jobs)}"  
         )  
+  
+        print(  
+            f"CSV File         : "  
+            f"{output_file.resolve()}"  
+        )  
+  
+        if not jobs:  
+  
+            print()  
+            print(  
+                "WARNING: AEWS was reachable, "  
+                f"but no jobs with application='{application}' "  
+                "were found."  
+            )  
+  
+            return 2  
   
         return 0  
   
     except Exception as exc:  
   
         print()  
-        print("=" * 70)  
+        print("=" * 72)  
         print("FAILED")  
-        print("=" * 70)  
+        print("=" * 72)  
   
         print()  
         print(  
